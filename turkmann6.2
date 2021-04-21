@@ -1,0 +1,96 @@
+---
+title: "turkmann6.2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(gtools)
+```
+
+
+```{r}
+blood_df <- tribble(
+  ~`Blood type`, ~Frequency,
+  "O", 76,
+  "A", 182,
+  "B", 60,
+  "AB", 17,
+)
+blood_df$`Blood type` <- factor(blood_df$`Blood type`, levels = c("O", "A", "B", "AB"))
+```
+
+```{r}
+p1 <- ggplot(data=blood_df, aes(x=`Blood type`, y=Frequency)) + geom_bar(stat="identity")  ## + coord_flip()
+p1 + theme()
+```
+
+```{r}
+gen_z <- function(theta, y) {
+  p <- theta[1]
+  q <- theta[2]
+  r <- 1 - (p + q)
+  z <- rep(NA, length(y))
+  for (i in 1:length(y)) {
+    if (y[i] == "O") {
+      z[i] <- "OO"
+    } else if (y[i] == "A") {
+      u <- runif(1)
+      if (u < (p ^ 2) / (p ^ 2 + 2 * p * r)) {
+        z[i] <- "AA"
+      } else {
+        z[i] <- "AO"
+      }
+    } else if (y[i] == "B") {
+      u <- runif(1)
+      if (u < (q ^ 2) / (q ^ 2 + 2 * q * r)) {
+        z[i] <- "BB"
+      } else {
+        z[i] <- "BO"
+      }
+    } else {
+      z[i] <- "AB"
+    }
+  }
+  z <- factor(z, levels = c("OO", "AA", "AO", "BB", "BO", "AB"))
+  return(z)
+}
+```
+
+```{r}
+gen_theta <- function(z, y) {
+  zn <- data.frame(summary(z))
+  ap <- 2 * zn["AA", ] + zn["AO", ] + zn["AB", ] + 1
+  aq <- 2 * zn["BB", ] + zn["BO", ] + zn["AB", ] + 1
+  ar <- 2 * zn["OO", ] + zn["AO", ] + zn["BO", ] + 1
+  p <- c(ap, aq, ar)
+  p <- p / sum(p)
+  theta <- rdirichlet(1, p)
+  theta <- theta[1:2]
+  return(theta)
+}
+```
+
+```{r}
+n_mcmc <- 1000
+theta <- c(1 / 3, 1 / 3)
+theta_mcmc <- matrix(NA, n_mcmc, 2)
+y <- c(rep("O", blood_df$Frequency[blood_df$`Blood type` == "O"]), rep("A", blood_df$Frequency[blood_df$`Blood type` == "A"]), rep("B", blood_df$Frequency[blood_df$`Blood type` == "B"]), rep("AB", blood_df$Frequency[blood_df$`Blood type` == "AB"]))
+for (i_mcmc in 1:n_mcmc) {
+  z <- gen_z(theta, y)
+  theta <- gen_theta(z, y)
+  theta_mcmc[i_mcmc, ] <- theta
+}
+theta_mcmc <- data.frame(theta_mcmc)
+names(theta_mcmc) <- c("p", "q")
+```
+
+```{r}
+theta_mcmc_traceplot <- data.frame(i = c(1:n_mcmc, 1:n_mcmc), theta = c(theta_mcmc$p, theta_mcmc$q), probability = c(rep("p", n_mcmc), rep("q", n_mcmc)))
+p2 <- ggplot(data = theta_mcmc_traceplot, aes(x = i, y = theta, group = probability)) + geom_line() + facet_wrap(~ probability, ncol = 1) + theme()
+p2
+```
