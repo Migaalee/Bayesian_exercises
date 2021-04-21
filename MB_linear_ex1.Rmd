@@ -1,0 +1,137 @@
+---
+title: "Exercise21April"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+```{r}
+library(tidyverse)
+library(R2jags)
+library(coda)
+```
+
+
+
+Load data
+
+```{r}
+variety<-read.delim("varieties.dat.txt", header = TRUE, sep = "\t")
+#for (i in 1:5) {
+#  variety[[i]] <- as_factor(variety[[i]] - 1)
+#}
+variety
+
+```
+
+
+
+
+```{r}
+X <- model.matrix(y ~ ., data = variety)
+n <- nrow(X)
+k <- ncol(X)
+```
+
+
+
+```{r}
+model_code <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dnorm(eta[i], sigma^-2)
+    eta[i] <- inprod(beta[], X[i, ])
+  }
+
+  # Priors
+  for (j in 1:k) {
+    beta[j] ~ dnorm(0, 100^-2)
+  }
+  sigma ~ dunif(0, 100)
+}
+"
+```
+
+
+
+```{r}
+model_data <- list(n = n, k = k, y = variety$y, X = X)
+model_parameters <- c("beta", "sigma")
+```
+
+```{r}
+model_run <- jags(
+  data = model_data,
+  parameters.to.save = model_parameters,
+  model.file = textConnection(model_code),
+  n.chains = 4,
+  n.iter = 1000,
+  n.burnin = 200,
+  n.thin = 2
+)
+```
+
+
+
+
+```{r}
+model_run_mcmc <- as.mcmc(model_run)
+
+```
+
+```{r}
+summary(model_run_mcmc)
+
+```
+
+
+```{r}
+plot(model_run_mcmc)
+
+```
+
+
+```{r}
+print(model_run)
+```
+
+```{r}
+autocorr.diag(model_run_mcmc)
+
+```
+
+```{r}
+autocorr.plot(model_run_mcmc)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
