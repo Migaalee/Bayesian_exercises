@@ -1,0 +1,120 @@
+---
+title: "MB_exercise2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+We might need it
+#y[i]~dbern(p[i])
+#logit(p[i])<-inprod(brta[],x[,i])
+#y[i]~dbern(p[i])
+#p[i]<-invlogit(inprod(brta[],x[,i]))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Load libraries
+```{r}
+library(tidyverse)
+library(R2jags)
+library(coda)
+```
+
+
+```{r}
+heart <- read_csv("heart.csv") # %>%
+
+for (i in c(2,3,6,7, 9, 11, 12, 13, 14)) {
+  heart[[i]] <- as_factor(heart[[i]] - 1)
+}
+heart
+```
+
+
+
+```{r}
+X <- model.matrix(target ~ ., data = heart)
+n <- nrow(X)
+k <- ncol(X)
+```
+
+
+```{r}
+model_code <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dbern(min(max(eta[i])))
+    logit(eta[i]) <- inprod(beta[], X[i,])
+  }
+
+  # Priors
+  for (j in 1:k) {
+    beta[j] ~ dnorm(0, 0.005^-2)
+  }
+}
+"
+
+```
+
+```{r}
+model_data <- list(n = n, k = k, y = heart$target, X = X)
+model_parameters <- c("beta")
+```
+
+
+
+
+```{r}
+model_run <- jags(
+  data = model_data,
+  parameters.to.save = model_parameters,
+  model.file = textConnection(model_code),
+  n.chains = 4,
+  n.iter = 1000,
+  n.burnin = 200,
+  n.thin = 2
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
