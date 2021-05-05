@@ -1,0 +1,259 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(R2jags)
+library(coda)
+library(bridgesampling)
+```
+
+```{r}
+exerc35 <- read_table2("example.dat.txt"); exerc35
+```
+
+```{r}
+X <- model.matrix(y ~ ., data = exerc35)
+n <- nrow(X)
+k <- ncol(X)
+```
+
+```{r}
+model_code <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dnorm(eta[i], sigma^-2)
+    eta[i] <- inprod(beta[], X[i, ])
+  }
+
+  # Priors
+  for (j in 1:k) {
+    beta[j] ~ dnorm(0, 100^-2)
+  }
+  sigma ~ dunif(0, 1000)
+}
+"
+```
+
+```{r}
+model_data <- list(n = n, k = k, y = exerc35$y, X = X)
+model_parameters <- c("beta", "sigma")
+```
+
+```{r}
+model_run <- jags(
+  data = model_data,
+  parameters.to.save = model_parameters,
+  model.file = textConnection(model_code),
+  n.chains = 4,
+  n.iter = 1000,
+  n.burnin = 200,
+  n.thin = 5
+)
+```
+
+```{r}
+model_run_mcmc <- as.mcmc(model_run)
+```
+
+```{r}
+summary(model_run_mcmc)
+```
+
+```{r}
+plot(model_run_mcmc)
+```
+
+```{r}
+print(model_run)
+```
+
+```{r}
+autocorr.diag(model_run_mcmc)
+```
+
+```{r}
+autocorr.plot(model_run_mcmc)
+```
+
+```{r}
+geweke.diag(model_run_mcmc)
+```
+
+```{r}
+gelman.diag(model_run_mcmc)
+```
+
+```{r}
+chains <- tibble()
+for (i in 1:length(model_run_mcmc)) {
+  chains <- bind_rows(chains, as_tibble(model_run_mcmc[[i]]))
+}
+chains
+```
+
+```{r}
+ngen <- 400
+y_gen <- matrix(NA, ngen, n)
+mean_y_gen <- rep(NA, ngen)
+mean_col_X <- colMeans(X)
+for (igen in 1:ngen) {
+  id_gen <- sample(1:nrow(chains), 1)
+  beta_sim <- chains[id_gen, 1:dim(X)[2]]
+  sigma_sim <- chains$sigma[id_gen]
+  mean_y_gen[igen] <- rnorm(1, sum(beta_sim * mean_col_X), sqrt(sigma_sim / n))
+}
+mean_y_gen <- tibble(`mean Y` = mean_y_gen)
+```
+
+```{r}
+p <- ggplot(data = mean_y_gen, aes(x = `mean Y`)) + geom_density(fill = "blue", alpha = 0.3) + geom_vline(xintercept = mean(exerc35$y), color = "red")
+p
+```
+
+```{r}
+log_posterior_H1 <- function(pars, data) {
+  beta_coef <- c()
+  for (i in 1:k) {
+    beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+  }
+  sigma_coef <- pars["sigma"]  ## extract parameter
+  out <-
+    sum(dnorm(beta_coef, 0, 100, log = TRUE)) +  # prior
+    dunif(sigma_coef, 0, 1000, log = TRUE) +  # prior
+    sum(dnorm(exerc35$y, X %*% beta_coef, sigma_coef, log = TRUE)) # likelihood
+  return(out)
+}
+```
+
+```{r}
+model_run$BUGSoutput$DIC
+```
+
+```{r}
+lb_H1 <- rep(-Inf, k)
+ub_H1 <- rep(Inf, k)
+for (i in 1:k) {
+  names(lb_H1)[i] <- paste0("beta[", i, "]")
+  names(ub_H1)[i] <- paste0("beta[", i, "]")
+}
+lb_H1["sigma"] <- 0
+ub_H1["sigma"] <- 1000
+lb_H1["deviance"] <- -Inf
+ub_H1["deviance"] <- Inf
+```
+
+```{r}
+bridge_H1 <- bridge_sampler(samples = model_run_mcmc,
+                            log_posterior = log_posterior_H1,
+                            data = model_data,
+                            lb = lb_H1, ub = ub_H1); bridge_H1
+```
+
+```{r}
+X0 <- model.matrix(y ~ x2 + x4, data = exerc35)
+n0 <- nrow(X0)
+k0 <- ncol(X0)
+```
+
+```{r}
+model0_code <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dnorm(eta[i], sigma^-2)
+    eta[i] <- inprod(beta[], X[i, ])
+  }
+
+  # Priors
+  for (j in 1:k) {
+    beta[j] ~ dnorm(0, 100^-2)
+  }
+  sigma ~ dunif(0, 1000)
+}
+"
+```
+
+```{r}
+model0_data <- list(n = n0, k = k0, y = exerc35$y, X = X0)
+model0_parameters <- c("beta", "sigma")
+```
+
+```{r}
+model0_run <- jags(
+  data = model0_data,
+  parameters.to.save = model0_parameters,
+  model.file = textConnection(model0_code),
+  n.chains = 4,
+  n.iter = 1000,
+  n.burnin = 200,
+  n.thin = 2
+)
+```
+
+```{r}
+model0_run_mcmc <- as.mcmc(model0_run)
+```
+
+```{r}
+log_posterior_H0 <- function(pars, data) {
+  beta_coef <- c()
+  if (k0 == 1) {
+    beta_coef[1] <- pars[paste0("beta")]  ## extract parameter
+  } else {
+    for (i in 1:k0) {
+      beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+    }
+  }
+  sigma_coef <- pars["sigma"]  ## extract parameter
+  out <-
+    sum(dnorm(beta_coef, 0, 100, log = TRUE)) +  # prior
+    dunif(sigma_coef, 0, 1000, log = TRUE) +  # prior
+    sum(dnorm(exerc35$y, X0 %*% beta_coef, sigma_coef, log = TRUE)) # likelihood
+  return(out)
+}
+```
+
+```{r}
+lb_H0 <- rep(-Inf, k0)
+ub_H0 <- rep(Inf, k0)
+if (k0 == 1) {
+  names(lb_H0)[1] <- "beta"
+  names(ub_H0)[1] <- "beta"
+} else {
+  for (i in 1:k0) {
+    names(lb_H0)[i] <- paste0("beta[", i, "]")
+    names(ub_H0)[i] <- paste0("beta[", i, "]")
+  }
+}
+lb_H0["sigma"] <- 0
+ub_H0["sigma"] <- 1000
+lb_H0["deviance"] <- -Inf
+ub_H0["deviance"] <- Inf
+```
+
+```{r}
+bridge_H0 <- bridge_sampler(samples = model0_run_mcmc,
+                            log_posterior = log_posterior_H0,
+                            data = model0_data,
+                            lb = lb_H0, ub = ub_H0); bridge_H0
+```
+
+```{r}
+bf_H1vsH0 <- bf(bridge_H1, bridge_H0); bf_H1vsH0
+```
+
+```{r}
+model0_run$BUGSoutput$DIC
+```
+
+```{r}
+slm <- lm(y ~ ., data = exerc35)
+summary(slm)
+```
+
