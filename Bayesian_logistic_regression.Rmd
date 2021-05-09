@@ -1,0 +1,145 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(R2jags)
+library(coda)
+```
+
+```{r}
+heart <- read_csv("heart.csv")
+for (i in c(2, 3, 6, 7, 9, 11, 12, 13)) {
+  heart[[i]] <- as_factor(heart[[i]])
+}
+for (i in c(1, 4, 5, 8, 10)) {
+  heart[[i]] <- scale(heart[[i]])
+}
+heart
+```
+
+Model matrix, with dummy variables.
+
+```{r}
+X <- model.matrix(target ~ ., data = heart)
+n <- nrow(X)
+k <- ncol(X)
+```
+
+Adjusting the prior variance, to get coverage for the probability space (setting covariates to 0)
+
+```{r}
+prior_sample <- data.frame(prior = 1 / (1 + exp(-rnorm(1000, mean = 0, sd = 1.2))))
+ggplot(data = prior_sample, aes(x = `prior`)) + geom_density(fill = "blue", alpha = 0.3)
+```
+
+Model specification in JAGS dialect.
+
+```{r}
+model_code <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dbern(max(0, min(eta[i], 1)))
+    logit(eta[i]) <- inprod(beta[], X[i, ])
+  }
+
+  # Priors
+  for (j in 1:k) {
+      beta[j] ~ dnorm(0, 1.2^-2)
+  }
+}
+"
+```
+
+```{r}
+model_data <- list(n = n, k = k, y = heart$target, X = X)
+model_parameters <- c("beta")
+```
+
+Model running, takes a bit...
+
+```{r}
+model_run <- jags(
+  data = model_data,
+  parameters.to.save = model_parameters,
+  model.file = textConnection(model_code),
+  n.chains = 4,
+  n.iter = 20000,
+  n.burnin = 2000,
+  n.thin = 200
+)
+```
+
+```{r}
+model_run_mcmc <- as.mcmc(model_run)
+```
+
+```{r}
+summary(model_run_mcmc)
+```
+
+Diagnostics are not great, but the chains can be used.
+```{r}
+plot(model_run_mcmc)
+```
+
+```{r}
+print(model_run)
+```
+
+```{r}
+autocorr.diag(model_run_mcmc)
+```
+
+```{r}
+autocorr.plot(model_run_mcmc)
+```
+
+```{r}
+geweke.plot(model_run_mcmc)
+```
+
+```{r}
+gelman.diag(model_run_mcmc)
+```
+
+```{r}
+chains <- tibble()
+for (i in 1:length(model_run_mcmc)) {
+  chains <- bind_rows(chains, as_tibble(model_run_mcmc[[i]]))
+}
+chains
+```
+
+```{r}
+ngen <- 320
+y_gen <- matrix(NA, ngen, n)
+mean_y_gen <- rep(NA, ngen)
+mean_col_X <- colMeans(X)
+for (igen in 1:ngen) {
+  id_gen <- sample(1:nrow(chains), 1)
+  beta_sim <- chains[id_gen, 1:dim(X)[2]]
+  for (i in 1:n) {
+      y_gen[igen, i] <- as.numeric(rbernoulli(1, 1 / (1 + exp(-sum(beta_sim * X[i, ])))))
+  }
+  mean_y_gen[igen] <- mean(y_gen[igen, ])
+}
+mean_y_gen <- tibble(`mean Y` = mean_y_gen)
+```
+
+```{r}
+pm <- ggplot(data = mean_y_gen, aes(x = `mean Y`)) + geom_density(fill = "blue", alpha = 0.3) + geom_vline(xintercept = mean(heart$target), color = "red")
+pm
+```
+
+```{r}
+h0prior <- pnorm(0, mean = 0, sd = 1.2)
+h0post <- sum(chains$`beta[2]` <= 0) / dim(chains)[1]
+h1prior <- 1 - h0prior
+h1post <- 1 - h0post
+bf <- (h0post / h0prior) / (h1post / h1prior); bf
+```
