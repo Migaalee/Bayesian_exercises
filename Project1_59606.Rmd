@@ -1,0 +1,78 @@
+---
+title: "Project1_59606"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Loading all libraries.
+
+```{r}
+library(tidyverse)
+library(R2jags)
+library(coda)
+```
+
+
+With infection as the target variable, choose and adjust an adequate
+Bayesian regression model (linear, generalized linear or logistic) on a training
+subset of the whole data, using a Monte Carlo Markov Chain procedure.
+
+Load dataset and examine it.
+
+```{r}
+infection <- read_csv("infections.csv"); infection
+```
+
+
+```{r}
+infection$infection<-ifelse(as.character(infection$infection) == "Yes", 1, 0)
+infection$sex<-ifelse(as.character(infection$sex) == "F", 1, 0)
+infection$prevAB<-ifelse(as.character(infection$prevAB) == "Yes", 1, 0)
+infection
+```
+
+
+
+```{r}
+for (i in c(3, 5, 8)) {
+  infection[[i]] <- as_factor(infection[[i]])
+}
+
+for (i in c(1, 2, 4, 6, 7)) {
+  infection[[i]] <- scale(infection[[i]])
+}
+infection
+```
+
+
+
+
+
+Check for the convergence of the generated chains.
+
+
+
+Determine if the model is suitable by comparing it with a null (with no
+covariates) model, using the Bayes factor.
+
+
+
+Present a predictive performance measure of the model using the test
+subset (remaining observations).
+
+
+
+
+Produce a report with the results of the data analysis, with all the code
+used.
+
+
+
+
+
+
+
+
