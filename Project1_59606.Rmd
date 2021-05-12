@@ -13,6 +13,7 @@ Loading all libraries.
 library(tidyverse)
 library(R2jags)
 library(coda)
+
 ```
 
 
@@ -37,7 +38,7 @@ infection
 
 
 ```{r}
-for (i in c(3, 5, 8)) {
+for (i in c(3, 5)) {
   infection[[i]] <- as_factor(infection[[i]])
 }
 
@@ -48,6 +49,97 @@ infection
 ```
 
 
+```{r}
+infection<-as.data.frame(infection)
+infection
+```
+
+Divide dataset into training and test datasets. 
+
+
+
+```{r}
+split_dummy <- sample(c(rep(0, 0.7 * nrow(infection)),  # Create dummy for splitting
+                        rep(1, 0.3 * nrow(infection))))
+```
+
+```{r}
+infection_train <- infection[split_dummy == 0, ] # Create train data
+infection_test <- infection[split_dummy == 1, ] # Create test data
+infection_train
+```
+
+
+
+```{r}
+summary(infection_train)
+
+```
+
+```{r}
+infection_train2<-select(infection_train, c(3,5,8)); infection_train2
+```
+
+
+
+Model matrix, with dummy variables.
+
+```{r}
+
+
+X <- model.matrix(infection_train$infection ~ ., data = infection_train)
+n <- nrow(X);n
+k <- ncol(X);k
+
+```
+
+
+
+Model specification in JAGS dialect.
+
+```{r}
+model_code <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dbern(max(0, min(eta[i], 1)))
+    logit(eta[i]) <- inprod(beta[], X[i, ])
+  }
+
+  # Priors
+  for (j in 1:k) {
+      beta[j] ~ dnorm(0, 1.2^-2)
+  }
+}
+"
+```
+
+
+
+```{r}
+model_data <- list(n = n, k = k, y = infectionB$infection, X = X)
+model_parameters <- c("beta")
+```
+
+
+```{r}
+model_run <- jags(
+  data = model_data,
+  parameters.to.save = model_parameters,
+  model.file = textConnection(model_code),
+  n.chains = 2,
+  n.iter = 5000,
+  n.burnin = 100,
+  n.thin = 10
+)
+
+#n.chains = 4,
+ # n.iter = 5000,
+ # n.burnin = 200,
+ # n.thin = 5
+
+```
 
 
 
@@ -55,13 +147,108 @@ Check for the convergence of the generated chains.
 
 
 
+```{r}
+model_run_mcmc <- as.mcmc(model_run)
+```
+
+```{r}
+summary(model_run_mcmc)
+```
+
+
+Diagnostic plots
+
+
+```{r}
+plot(model_run_mcmc)
+```
+
+```{r}
+print(model_run)
+```
+
+
+```{r}
+autocorr.diag(model_run_mcmc)
+
+```
+
+
+
+```{r}
+autocorr.plot(model_run_mcmc)
+
+```
+
+
+```{r}
+geweke.plot(model_run_mcmc)
+```
+
+```{r}
+gelman.diag(model_run_mcmc)
+
+```
+
 Determine if the model is suitable by comparing it with a null (with no
 covariates) model, using the Bayes factor.
+
+
+```{r}
+chains <- tibble()
+for (i in 1:length(model_run_mcmc)) {
+  chains <- bind_rows(chains, as_tibble(model_run_mcmc[[i]]))
+}
+chains
+```
+
+```{r}
+ngen <- 320
+y_gen <- matrix(NA, ngen, n)
+mean_y_gen <- rep(NA, ngen)
+mean_col_X <- colMeans(X)
+for (igen in 1:ngen) {
+  id_gen <- sample(1:nrow(chains), 1)
+  beta_sim <- chains[id_gen, 1:dim(X)[2]]
+  for (i in 1:n) {
+      y_gen[igen, i] <- as.numeric(rbernoulli(1, 1 / (1 + exp(-sum(beta_sim * X[i, ])))))
+  }
+  mean_y_gen[igen] <- mean(y_gen[igen, ])
+}
+mean_y_gen <- tibble(`mean Y` = mean_y_gen)
+```
+
+
+
+```{r}
+pm <- ggplot(data = mean_y_gen, aes(x = `mean Y`)) + geom_density(fill = "blue", alpha = 0.3) + geom_vline(xintercept = mean(infection_train$infection), color = "red")
+pm
+```
+
+
+
+```{r}
+h0prior <- pnorm(0, mean = 0, sd = 1.2)
+h0post <- sum(chains$`beta[2]` <= 0) / dim(chains)[1]
+h1prior <- 1 - h0prior
+h1post <- 1 - h0post
+bf <- (h0post / h0prior) / (h1post / h1prior); bf
+```
+
+Hence, there is a strong evidence for H1 hypothesis. 
+
+
 
 
 
 Present a predictive performance measure of the model using the test
 subset (remaining observations).
+
+
+
+
+
+
 
 
 
