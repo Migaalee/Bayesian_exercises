@@ -13,6 +13,7 @@ Loading all libraries.
 library(tidyverse)
 library(R2jags)
 library(coda)
+library(bridgesampling)
 
 ```
 
@@ -80,9 +81,27 @@ summary(infection_train)
 infection_train2<-select(infection_train, c(3,5,8)); infection_train2
 ```
 
+```{r}
+
+for (i in c(1, 2)) {
+  infection_train2[[i]] <- replace(infection_train2[[i]], infection_train2 ==1, 0 )
+  
+  
+   #your.mat <- replace(your.mat, your.mat == 1, 0)
+}
+infection_train3
+```
 
 
-Model matrix, with dummy variables.
+
+
+
+
+
+
+##Null hypothesis
+
+Model matrix, with all variables - this is my null hypothesis.
 
 ```{r}
 
@@ -190,9 +209,221 @@ gelman.diag(model_run_mcmc)
 
 ```
 
+
+Bridge sampling for my hypothesis.
+
+
+```{r}
+log_posterior_H1 <- function(pars, data) {
+  beta_coef <- c()
+  for (i in 1:k) {
+    beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+  }
+  #sigma_coef <- pars["sigma"]  ## extract parameter
+  out <-
+    sum(dnorm(beta_coef, 0, 1.2, log = TRUE)) +  # prior
+    #dunif(sigma_coef, 0, 5000, log = TRUE) +  # prior
+    sum(dnorm(infection_train$infection, X %*% beta_coef, log = TRUE)) # likelihood
+  return(out)
+}
+```
+
+```{r}
+model_run$BUGSoutput$DIC
+```
+
+```{r}
+lb_H1 <- rep(-Inf, k)
+ub_H1 <- rep(Inf, k)
+for (i in 1:k) {
+  names(lb_H1)[i] <- paste0("beta[", i, "]")
+  names(ub_H1)[i] <- paste0("beta[", i, "]")
+}
+#lb_H1["sigma"] <- 0
+#ub_H1["sigma"] <- 5000
+lb_H1["deviance"] <- -Inf
+ub_H1["deviance"] <- Inf
+```
+
+```{r}
+bridge_H1 <- bridge_sampler(samples = model_run_mcmc,
+                            log_posterior = log_posterior_H1,
+                            data = model_data,
+                            lb = lb_H1, ub = ub_H1)
+```
+
+
+
+
+
+##Alternative hypothesis 
+
+
+
+
+Alternative hypothesis.
+
+New dataset. 
+
+```{r}
+
+infection_train0<-replace(infection_train$sex, infection_train$sex==0,1)
+
+
+infection_train0
+```
+
+
+
+
+```{r}
+
+X0 <- model.matrix(infection_train$infection ~ . , data = infection_train0)
+n0 <- nrow(X0);n0
+k0 <- ncol(X0);k0
+
+```
+
+
+Model specification in JAGS dialect.
+
+```{r}
+model_code0 <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dbern(max(0, min(eta[i], 1)))
+    logit(eta[i]) <- inprod(beta[], X[i, ])
+  }
+
+  # Priors
+  for (j in 1:k) {
+      beta[j] ~ dnorm(0, 1.2^-2)
+  }
+}
+"
+```
+
+
+
+```{r}
+model_data0 <- list(n = n0, k = k0, y = infectionB$infection, X = X0)
+model_parameters0 <- c("beta")
+```
+
+
+```{r}
+model_run0 <- jags(
+  data = model_data0,
+  parameters.to.save = model_parameters0,
+  model.file = textConnection(model_code0),
+  n.chains = 2,
+  n.iter = 5000,
+  n.burnin = 100,
+  n.thin = 10
+)
+
+#n.chains = 4,
+ # n.iter = 5000,
+ # n.burnin = 200,
+ # n.thin = 5
+
+```
+
+
+```{r}
+model_run_mcmc0 <- as.mcmc(model_run0)
+```
+
+```{r}
+summary(model_run_mcmc0)
+```
+
+
+
+Bridge sampling for my alternative hypothesis.
+
+
+```{r}
+log_posterior_H0 <- function(pars, data) {
+  beta_coef <- c()
+  for (i in 1:k) {
+    beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+  }
+  #sigma_coef <- pars["sigma"]  ## extract parameter
+  out <-
+    sum(dnorm(beta_coef, 0, 1.2, log = TRUE)) +  # prior
+    #dunif(sigma_coef, 0, 5000, log = TRUE) +  # prior
+    sum(dnorm(infection_train$infection, X0 %*% beta_coef, log = TRUE)) # likelihood
+  return(out)
+}
+```
+
+```{r}
+model_run0$BUGSoutput$DIC
+```
+
+```{r}
+lb_H0 <- rep(-Inf, k)
+ub_H0 <- rep(Inf, k)
+for (i in 1:k) {
+  names(lb_H0)[i] <- paste0("beta[", i, "]")
+  names(ub_H0)[i] <- paste0("beta[", i, "]")
+}
+#lb_H1["sigma"] <- 0
+#ub_H1["sigma"] <- 5000
+lb_H0["deviance"] <- -Inf
+ub_H0["deviance"] <- Inf
+```
+
+```{r}
+bridge_H0 <- bridge_sampler(samples = model_run_mcmc0,
+                            log_posterior = log_posterior_H0,
+                            data = model_data0,
+                            lb = lb_H0, ub = ub_H0)
+```
+
+
+
+
+Now estimate Bayes factor.
+
+```{r}
+bf_H1vsH0 <- bf(bridge_H1, bridge_H0); bf_H1vsH0
+```
+
+```{r}
+model_run0$BUGSoutput$DIC
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Determine if the model is suitable by comparing it with a null (with no
 covariates) model, using the Bayes factor.
 
+First wrap our null hypothesis.
 
 ```{r}
 chains <- tibble()
@@ -201,6 +432,8 @@ for (i in 1:length(model_run_mcmc)) {
 }
 chains
 ```
+
+
 
 ```{r}
 ngen <- 320
@@ -225,17 +458,31 @@ pm <- ggplot(data = mean_y_gen, aes(x = `mean Y`)) + geom_density(fill = "blue",
 pm
 ```
 
+We need to define our alternative H1 hypothesis. 
 
-
+  SZ
 ```{r}
 h0prior <- pnorm(0, mean = 0, sd = 1.2)
-h0post <- sum(chains$`beta[2]` <= 0) / dim(chains)[1]
-h1prior <- 1 - h0prior
-h1post <- 1 - h0post
-bf <- (h0post / h0prior) / (h1post / h1prior); bf
+h0post <- sum(chains$`beta[2]` <= 0) / dim(chains)[1] 
+
+
+
+
+#h1prior <- 1 - h0prior
+#h1post <- 1 - h0post
+
+bf <- (h1post / h1prior) / (h0post / h0prior); bf
+
+
+
+
+
+
 ```
 
-Hence, there is a strong evidence for H1 hypothesis. 
+Hence, there is a strong evidence for H0 hypothesis (when it is low) (our null hypothesis) against H1 (new alternative) hypothesis.
+
+
 
 
 
