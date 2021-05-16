@@ -3,24 +3,29 @@ title: "Project1_59606"
 output: html_document
 ---
 
+##Data pre-processing 
+
+With infection as the target variable, choose and adjust an adequate
+Bayesian regression model (linear, generalized linear or logistic) on a training
+subset of the whole data, using a Monte Carlo Markov Chain procedure. 
+
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Loading all libraries.
+Loading all libraries that will be required.
 
 ```{r}
 library(tidyverse)
 library(R2jags)
 library(coda)
 library(bridgesampling)
+library(lattice)
+library(ggmcmc)
 
 ```
 
-
-With infection as the target variable, choose and adjust an adequate
-Bayesian regression model (linear, generalized linear or logistic) on a training
-subset of the whole data, using a Monte Carlo Markov Chain procedure.
 
 Load dataset and examine it.
 
@@ -28,7 +33,9 @@ Load dataset and examine it.
 infection <- read_csv("infections.csv"); infection
 ```
 
+The dataset contains several variables categorical (sex in column 3, prevAB- previous antibiotics (Yes / No) in column 5) and numerical variables (fewer_hours in column 1, wcc - white cell count in column 4, pct - procalcitonin levels in column 6, crp - c-reactive protein in column 7) and a categorical target variable - infection. 
 
+First we set our changes our character variables to binary variables. 
 ```{r}
 infection$infection<-ifelse(as.character(infection$infection) == "Yes", 1, 0)
 infection$sex<-ifelse(as.character(infection$sex) == "F", 1, 0)
@@ -37,6 +44,7 @@ infection
 ```
 
 
+We change our character variables to factors and normalise the rest of the variables.
 
 ```{r}
 for (i in c(3, 5)) {
@@ -50,13 +58,13 @@ infection
 ```
 
 
+In the project we were asked to split our dataset into tarining and test datasets. 
 ```{r}
 infection<-as.data.frame(infection)
 infection
 ```
 
-Divide dataset into training and test datasets. 
-
+Divide dataset into training and test datasets. I have decided to slipt dataset to 70/30 training/test. 
 
 
 ```{r}
@@ -77,36 +85,22 @@ summary(infection_train)
 
 ```
 
-```{r}
-infection_train2<-select(infection_train, c(3,5,8)); infection_train2
-```
 
 ```{r}
 
-for (i in c(1, 2)) {
-  infection_train2[[i]] <- replace(infection_train2[[i]], infection_train2 ==1, 0 )
-  
-  
-   #your.mat <- replace(your.mat, your.mat == 1, 0)
-}
-infection_train3
+#write.csv(infection_train, "infections1.csv")
 ```
 
 
 
-
-
-
-
-
-##Null hypothesis
+##Model adjustment with training dataset
 
 Model matrix, with all variables - this is my null hypothesis.
 
 ```{r}
 
 
-X <- model.matrix(infection_train$infection ~ ., data = infection_train)
+X <- model.matrix(infection ~ ., data = infection_train)
 n <- nrow(X);n
 k <- ncol(X);k
 
@@ -114,7 +108,8 @@ k <- ncol(X);k
 
 
 
-Model specification in JAGS dialect.
+
+Model specification in JAGS dialect using logistic regression. 
 
 ```{r}
 model_code <- "
@@ -137,10 +132,12 @@ model
 
 
 ```{r}
-model_data <- list(n = n, k = k, y = infectionB$infection, X = X)
+model_data <- list(n = n, k = k, y = infection_train$infection, X = X)
 model_parameters <- c("beta")
 ```
 
+
+The following call jags reads, compiles, runs and returns the model information along with MCMC samples and summary statistics.
 
 ```{r}
 model_run <- jags(
@@ -153,38 +150,74 @@ model_run <- jags(
   n.thin = 10
 )
 
-#n.chains = 4,
- # n.iter = 5000,
- # n.burnin = 200,
- # n.thin = 5
 
 ```
 
 
 
-Check for the convergence of the generated chains.
+## Check for the convergence of the generated chains. 
+
+
+```{r}
+print(model_run)
+```
+
+EXPLAIN!
+Rhat
+mu
+sd
+97.5
+pd
+DIC
 
 
 
+We can store our summary statistics to later examine it further.
 ```{r}
 model_run_mcmc <- as.mcmc(model_run)
 ```
 
+
 ```{r}
 summary(model_run_mcmc)
 ```
+EXPLAIN!
 
 
-Diagnostic plots
+Naive SE
+
+
+Time-series SE
+
+
+
+
+
+Diagnostic trace plots and density plots. 
+
+A traceplots are important for assessing convergence and diagnosing chain
+problems. We expect for a good within-chain and between-chain traceplots (red and black colors in the plots) to look random. Indeed, our traceplots do not indicate any convergence problems.
+
+We can also see posterior density plots, however they are not exactly ued for convergence diagnostics, but just to see shape of posterior. 
 
 
 ```{r}
 plot(model_run_mcmc)
 ```
 
+Another good way to look at convergence issues is to look at the plot with the running mean of the chains, which shows if each of the chain is slowly or
+quickly approaching its target distribution. What we can see in our plot that all beta parameters are approaching mean quickly and lastly deviance. When comparing both chains, they do converge to the same mean.
+
 ```{r}
-print(model_run)
+#First convert MCMC run into suitable dataframe for used package.
+S <- ggs(model_run_mcmc) #ggs() produces a data frame object with four variables (iteration, chain, parameter,value) from MCMC run.
+ggs_running(S)
+
+
 ```
+
+
+Autocorrelation analysis is not exactly a tool assesing convergence, however it is useful in order to see if there are potential problems in the model, we expect a correlation in the first lag and not in the next lags, which we do not see in our model.
 
 
 ```{r}
@@ -192,11 +225,18 @@ autocorr.diag(model_run_mcmc)
 
 ```
 
-
+This can easily be plotted as an explanation. We can see autocorrelation at first lag (shown as a vertical line) and no autocorrelation further. 
 
 ```{r}
 autocorr.plot(model_run_mcmc)
 
+```
+
+We can also inspect visually potential problems of convergence if there are any highly correlated parameters,with the correlations between all pairs of parameters. Here we can see that beta 1 has weak negative correlation with beta 4 and beta 6. 
+
+
+```{r}
+ ggs_crosscorrelation(S)
 ```
 
 
@@ -210,7 +250,17 @@ gelman.diag(model_run_mcmc)
 ```
 
 
-Bridge sampling for my hypothesis.
+
+
+
+
+
+
+
+
+
+
+Bridge sampling for my null hypothesis.
 
 
 ```{r}
@@ -258,27 +308,13 @@ bridge_H1 <- bridge_sampler(samples = model_run_mcmc,
 
 ##Alternative hypothesis 
 
-
-
-
 Alternative hypothesis.
 
-New dataset. 
-
-```{r}
-
-infection_train0<-replace(infection_train$sex, infection_train$sex==0,1)
-
-
-infection_train0
-```
-
-
 
 
 ```{r}
 
-X0 <- model.matrix(infection_train$infection ~ . , data = infection_train0)
+X0 <- model.matrix(infection_train$infection ~ 1 , data = infection_train)
 n0 <- nrow(X0);n0
 k0 <- ncol(X0);k0
 
@@ -348,7 +384,7 @@ Bridge sampling for my alternative hypothesis.
 ```{r}
 log_posterior_H0 <- function(pars, data) {
   beta_coef <- c()
-  for (i in 1:k) {
+  for (i in 1:k0) {
     beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
   }
   #sigma_coef <- pars["sigma"]  ## extract parameter
@@ -365,9 +401,9 @@ model_run0$BUGSoutput$DIC
 ```
 
 ```{r}
-lb_H0 <- rep(-Inf, k)
-ub_H0 <- rep(Inf, k)
-for (i in 1:k) {
+lb_H0 <- rep(-Inf, k0)
+ub_H0 <- rep(Inf, k0)
+for (i in 1:k0) {
   names(lb_H0)[i] <- paste0("beta[", i, "]")
   names(ub_H0)[i] <- paste0("beta[", i, "]")
 }
@@ -404,19 +440,7 @@ model_run0$BUGSoutput$DIC
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+##Bayesian factor estimation without bridge sampler
 
 
 
@@ -460,27 +484,33 @@ pm
 
 We need to define our alternative H1 hypothesis. 
 
-  SZ
+```{r}
+chains0 <- tibble()
+for (i in 1:length(model_run_mcmc0)) {
+  chains0 <- bind_rows(chains0, as_tibble(model_run_mcmc0[[i]]))
+}
+chains0
+```
+
+
+Bayesian factor estimation without Bridge sampler
+
 ```{r}
 h0prior <- pnorm(0, mean = 0, sd = 1.2)
 h0post <- sum(chains$`beta[2]` <= 0) / dim(chains)[1] 
 
+h1prior <- pnorm(0, mean = 0, sd = 1.2)
+h1post <- sum(chains0$beta <= 0) / dim(chains0)[1]
 
-
-
-#h1prior <- 1 - h0prior
-#h1post <- 1 - h0post
 
 bf <- (h1post / h1prior) / (h0post / h0prior); bf
-
-
-
 
 
 
 ```
 
 Hence, there is a strong evidence for H0 hypothesis (when it is low) (our null hypothesis) against H1 (new alternative) hypothesis.
+
 
 
 
