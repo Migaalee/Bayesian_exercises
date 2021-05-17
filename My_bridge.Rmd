@@ -1,0 +1,358 @@
+---
+title: "Untitled"
+author: "Migla Miskinyte Reis"
+date: "17/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+Bridge sampling for my null hypothesis.
+
+
+```{r}
+log_posterior_H1 <- function(pars, data) {
+  beta_coef <- c()
+  for (i in 1:k) {
+    beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+  }
+  #sigma_coef <- pars["sigma"]  ## extract parameter
+  out <-
+    sum(dnorm(beta_coef, 0, 1.2, log = TRUE)) +  # prior
+    #dunif(sigma_coef, 0, 5000, log = TRUE) +  # prior
+    sum(dnorm(infection_train$infection, X %*% beta_coef, log = TRUE)) # likelihood
+  return(out)
+}
+```
+
+```{r}
+model_run$BUGSoutput$DIC
+```
+
+```{r}
+lb_H1 <- rep(-Inf, k)
+ub_H1 <- rep(Inf, k)
+for (i in 1:k) {
+  names(lb_H1)[i] <- paste0("beta[", i, "]")
+  names(ub_H1)[i] <- paste0("beta[", i, "]")
+}
+lb_H1["deviance"] <- -Inf
+ub_H1["deviance"] <- Inf
+```
+
+```{r}
+bridge_H1 <- bridge_sampler(samples = model_run_mcmc,
+                            log_posterior = log_posterior_H1,
+                            data = model_data,
+                            lb = lb_H1, ub = ub_H1);bridge_H1
+```
+
+
+
+
+
+##Alternative hypothesis 
+
+Alternative hypothesis.
+
+
+
+```{r}
+
+X0 <- model.matrix(infection_train$infection ~ 1 , data = infection_train)
+n0 <- nrow(X0);n0
+k0 <- ncol(X0);k0
+
+```
+
+
+Model specification in JAGS dialect.
+
+```{r}
+model_code0 <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dbern(max(0, min(eta[i], 1)))
+    logit(eta[i]) <- inprod(beta[], X[i, ])
+  }
+
+  # Prior
+  
+      beta ~ dnorm(0, 1.2^-2)
+}
+"
+```
+
+
+
+```{r}
+model_data0 <- list(n = n0, k = k0, y = infection_train$infection, X = X0)
+model_parameters0 <- c("beta")
+```
+
+
+```{r}
+model_run0 <- jags(
+  data = model_data0,
+  parameters.to.save = model_parameters0,
+  model.file = textConnection(model_code0),
+  n.chains = 2,
+  n.iter = 8000,
+  n.burnin = 100,
+  n.thin = 20
+)
+
+#n.chains = 4,
+ # n.iter = 5000,
+ # n.burnin = 200,
+ # n.thin = 5
+
+```
+
+
+```{r}
+model_run_mcmc0 <- as.mcmc(model_run0)
+```
+
+```{r}
+summary(model_run_mcmc0)
+```
+
+
+
+Bridge sampling for my alternative hypothesis.
+
+
+```{r}
+
+
+log_posterior_H0 <- function(pars, data) {
+  beta_coef <- c()
+  if (k0 == 1) {
+    beta_coef[1] <- pars[paste0("beta")]  ## extract parameter
+  } else {
+    for (i in 1:k0) {
+      beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+    }
+  }
+  out <-
+    sum(dnorm(beta_coef, 0, 1.2, log = TRUE)) +  # prior
+    sum(dnorm(infection_train$infection, X0 %*% beta_coef, log = TRUE)) # likelihood
+  return(out)
+}
+
+```
+
+```{r}
+model_run0$BUGSoutput$DIC
+```
+
+```{r}
+
+lb_H0 <- rep(-Inf, k0)
+ub_H0 <- rep(Inf, k0)
+if (k0 == 1) {
+  names(lb_H0)[1] <- "beta"
+  names(ub_H0)[1] <- "beta"
+} else {
+  for (i in 1:k0) {
+    names(lb_H0)[i] <- paste0("beta[", i, "]")
+    names(ub_H0)[i] <- paste0("beta[", i, "]")
+  }
+}
+lb_H0["deviance"] <- -Inf
+ub_H0["deviance"] <- Inf
+
+```
+
+```{r}
+bridge_H0 <- bridge_sampler(samples = model_run_mcmc0,
+                            log_posterior = log_posterior_H0,
+                            data = model_data0,
+                            lb = lb_H0, ub = ub_H0);bridge_H0
+```
+
+
+
+Now estimate Bayes factor.
+
+```{r}
+bf_H1vsH0 <- bf(bridge_H1, bridge_H0); bf_H1vsH0
+```
+
+```{r}
+model_run0$BUGSoutput$DIC
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+log_posterior_H1 <- function(pars, data) {
+  beta_coef <- c()
+  for (i in 1:k) {
+    beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+  }
+  sigma_coef <- pars["sigma"]  ## extract parameter
+  out <-
+    sum(dnorm(beta_coef, 0, 100, log = TRUE)) +  # prior
+    dunif(sigma_coef, 0, 1000, log = TRUE) +  # prior
+    sum(dnorm(train$Y, X %*% beta_coef, sigma_coef, log = TRUE)) # likelihood
+  return(out)
+}
+
+lb_H1 <- rep(-Inf, k)
+ub_H1 <- rep(Inf, k)
+for (i in 1:k) {
+  names(lb_H1)[i] <- paste0("beta[", i, "]")
+  names(ub_H1)[i] <- paste0("beta[", i, "]")
+}
+lb_H1["sigma"] <- 0
+ub_H1["sigma"] <- 1000
+lb_H1["deviance"] <- -Inf
+ub_H1["deviance"] <- Inf
+
+bridge_H1 <- bridge_sampler(samples = model_run,
+                            log_posterior = log_posterior_H1,
+                            data = model_data,
+                            lb = lb_H1, ub = ub_H1); bridge_H1
+```
+
+
+
+
+
+
+
+
+#Determinar se o modelo é adequado, comparando-o com um modelo nulo (sem covariáveis), utilizando o fator Bayes.
+```{r}
+
+###### Primeiro criamos o novo modelo com Y = betaO ######
+X0 <- model.matrix(Y~1, data = train)
+n0 <- nrow(X0)
+k0 <- ncol(X0)
+
+model0_code <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dnorm(eta[i], sigma^-2)
+    eta[i] <- inprod(beta[], X[i, ])
+  }
+
+  # Priors
+
+beta ~ dnorm(0, 100^-2)
+sigma ~ dunif(0, 1000)
+}
+"
+
+model0_data <- list(n = n0, k = k0, y = train$Y, X = X0)
+model0_parameters <- c("beta", "sigma")
+
+model0_run <- jags(
+  data = model0_data,
+  parameters.to.save = model0_parameters,
+  model.file = textConnection(model0_code),
+  n.chains = 4,
+  n.iter = 500,
+  n.burnin = 100,
+  n.thin = 5
+)
+
+
+model0_run_mcmc <- as.mcmc(model0_run)
+
+
+log_posterior_H0 <- function(pars, data) {
+  beta_coef <- c()
+  if (k0 == 1) {
+    beta_coef[1] <- pars[paste0("beta")]  ## extract parameter
+  } else {
+    for (i in 1:k0) {
+      beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+    }
+  }
+  sigma_coef <- pars["sigma"]  ## extract parameter
+  out <-
+    sum(dnorm(beta_coef, 0, 100, log = TRUE)) +  # prior
+    dunif(sigma_coef, 0, 1000, log = TRUE) +  # prior
+    sum(dnorm(train$Y, X0 %*% beta_coef, sigma_coef, log = TRUE)) # likelihood
+  return(out)
+}
+
+lb_H0 <- rep(-Inf, k0)
+ub_H0 <- rep(Inf, k0)
+if (k0 == 1) {
+  names(lb_H0)[1] <- "beta"
+  names(ub_H0)[1] <- "beta"
+} else {
+  for (i in 1:k0) {
+    names(lb_H0)[i] <- paste0("beta[", i, "]")
+    names(ub_H0)[i] <- paste0("beta[", i, "]")
+  }
+}
+lb_H0["sigma"] <- 0
+ub_H0["sigma"] <- 1000
+lb_H0["deviance"] <- -Inf
+ub_H0["deviance"] <- Inf
+
+bridge_H0 <- bridge_sampler(samples = model0_run_mcmc,
+                            log_posterior = log_posterior_H0,
+                            data = model0_data,
+                            lb = lb_H0, ub = ub_H0); bridge_H0
+
+
+#### comparador Bayes Factor ####
+bf_H1vsH0 <- bf(bridge_H1, bridge_H0); bf_H1vsH0
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
