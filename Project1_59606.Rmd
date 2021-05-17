@@ -145,9 +145,9 @@ model_run <- jags(
   parameters.to.save = model_parameters,
   model.file = textConnection(model_code),
   n.chains = 2,
-  n.iter = 5000,
+  n.iter = 8000,
   n.burnin = 100,
-  n.thin = 10
+  n.thin = 20
 )
 
 
@@ -162,17 +162,11 @@ model_run <- jags(
 print(model_run)
 ```
 
-EXPLAIN!
-Rhat
-mu
-sd
-97.5
-pd
-DIC
+The Deviance information criterion (DIC) is a commonly applied method to summarize the fit of an MCMC chain and to access model correctness. When comparing different models, lower DIC has more evidence that this is the correct model.
 
 
 
-We can store our summary statistics to later examine it further.
+We can get further summary statistics for the posterior.
 ```{r}
 model_run_mcmc <- as.mcmc(model_run)
 ```
@@ -181,19 +175,16 @@ model_run_mcmc <- as.mcmc(model_run)
 ```{r}
 summary(model_run_mcmc)
 ```
-EXPLAIN!
-
-
-Naive SE
-
-
-Time-series SE
+The results give the posterior means, posterior standard deviations,
+and posterior quantiles for each variable.The “naive” standard error is the standard error of the mean, which captures simulation error of the mean rather than posterior
+uncertainty. The time-series standard error adjusts the “naive” standard error for
+autocorrelation. During first model runs with less iterations, time-series standard error was at least 30 times larger than SD of posterior distribution for that parameter, indicating computational MCMC error that was fixed after I increased iterations. 
 
 
 
 
 
-Diagnostic trace plots and density plots. 
+Diagnostic trace plots and density plots shown below.
 
 A traceplots are important for assessing convergence and diagnosing chain
 problems. We expect for a good within-chain and between-chain traceplots (red and black colors in the plots) to look random. Indeed, our traceplots do not indicate any convergence problems.
@@ -240,9 +231,18 @@ We can also inspect visually potential problems of convergence if there are any 
 ```
 
 
+
+Geweke z-score diagnostic focuses on the comparison of the two nonoverlapping parts of the Markov chain and compares the means of both parts, using a difference of means test
+to see if the two parts of the chain are from the same distribution. The expected outcome is to have 95 percent of the values between −2 and 2. In our model, there are few values that do not fall it this region, but most values seems ok.
+
+
 ```{r}
 geweke.plot(model_run_mcmc)
 ```
+
+
+Potential scale reduction factor relies on different chains for the same parameter, by comparing the between-chain variation with the within-chain variation. As expected for good convergence in our model it is close to 1. Values below 1.1 are considered to be acceptable.
+
 
 ```{r}
 gelman.diag(model_run_mcmc)
@@ -253,195 +253,7 @@ gelman.diag(model_run_mcmc)
 
 
 
-
-
-
-
-
-
-
-Bridge sampling for my null hypothesis.
-
-
-```{r}
-log_posterior_H1 <- function(pars, data) {
-  beta_coef <- c()
-  for (i in 1:k) {
-    beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
-  }
-  #sigma_coef <- pars["sigma"]  ## extract parameter
-  out <-
-    sum(dnorm(beta_coef, 0, 1.2, log = TRUE)) +  # prior
-    #dunif(sigma_coef, 0, 5000, log = TRUE) +  # prior
-    sum(dnorm(infection_train$infection, X %*% beta_coef, log = TRUE)) # likelihood
-  return(out)
-}
-```
-
-```{r}
-model_run$BUGSoutput$DIC
-```
-
-```{r}
-lb_H1 <- rep(-Inf, k)
-ub_H1 <- rep(Inf, k)
-for (i in 1:k) {
-  names(lb_H1)[i] <- paste0("beta[", i, "]")
-  names(ub_H1)[i] <- paste0("beta[", i, "]")
-}
-#lb_H1["sigma"] <- 0
-#ub_H1["sigma"] <- 5000
-lb_H1["deviance"] <- -Inf
-ub_H1["deviance"] <- Inf
-```
-
-```{r}
-bridge_H1 <- bridge_sampler(samples = model_run_mcmc,
-                            log_posterior = log_posterior_H1,
-                            data = model_data,
-                            lb = lb_H1, ub = ub_H1)
-```
-
-
-
-
-
-##Alternative hypothesis 
-
-Alternative hypothesis.
-
-
-
-```{r}
-
-X0 <- model.matrix(infection_train$infection ~ 1 , data = infection_train)
-n0 <- nrow(X0);n0
-k0 <- ncol(X0);k0
-
-```
-
-
-Model specification in JAGS dialect.
-
-```{r}
-model_code0 <- "
-model
-{
-  # Likelihood
-  for (i in 1:n) {
-    y[i] ~ dbern(max(0, min(eta[i], 1)))
-    logit(eta[i]) <- inprod(beta[], X[i, ])
-  }
-
-  # Priors
-  for (j in 1:k) {
-      beta[j] ~ dnorm(0, 1.2^-2)
-  }
-}
-"
-```
-
-
-
-```{r}
-model_data0 <- list(n = n0, k = k0, y = infectionB$infection, X = X0)
-model_parameters0 <- c("beta")
-```
-
-
-```{r}
-model_run0 <- jags(
-  data = model_data0,
-  parameters.to.save = model_parameters0,
-  model.file = textConnection(model_code0),
-  n.chains = 2,
-  n.iter = 5000,
-  n.burnin = 100,
-  n.thin = 10
-)
-
-#n.chains = 4,
- # n.iter = 5000,
- # n.burnin = 200,
- # n.thin = 5
-
-```
-
-
-```{r}
-model_run_mcmc0 <- as.mcmc(model_run0)
-```
-
-```{r}
-summary(model_run_mcmc0)
-```
-
-
-
-Bridge sampling for my alternative hypothesis.
-
-
-```{r}
-log_posterior_H0 <- function(pars, data) {
-  beta_coef <- c()
-  for (i in 1:k0) {
-    beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
-  }
-  #sigma_coef <- pars["sigma"]  ## extract parameter
-  out <-
-    sum(dnorm(beta_coef, 0, 1.2, log = TRUE)) +  # prior
-    #dunif(sigma_coef, 0, 5000, log = TRUE) +  # prior
-    sum(dnorm(infection_train$infection, X0 %*% beta_coef, log = TRUE)) # likelihood
-  return(out)
-}
-```
-
-```{r}
-model_run0$BUGSoutput$DIC
-```
-
-```{r}
-lb_H0 <- rep(-Inf, k0)
-ub_H0 <- rep(Inf, k0)
-for (i in 1:k0) {
-  names(lb_H0)[i] <- paste0("beta[", i, "]")
-  names(ub_H0)[i] <- paste0("beta[", i, "]")
-}
-#lb_H1["sigma"] <- 0
-#ub_H1["sigma"] <- 5000
-lb_H0["deviance"] <- -Inf
-ub_H0["deviance"] <- Inf
-```
-
-```{r}
-bridge_H0 <- bridge_sampler(samples = model_run_mcmc0,
-                            log_posterior = log_posterior_H0,
-                            data = model_data0,
-                            lb = lb_H0, ub = ub_H0)
-```
-
-
-
-
-Now estimate Bayes factor.
-
-```{r}
-bf_H1vsH0 <- bf(bridge_H1, bridge_H0); bf_H1vsH0
-```
-
-```{r}
-model_run0$BUGSoutput$DIC
-```
-
-
-
-
-
-
-
-
-##Bayesian factor estimation without bridge sampler
-
+##Bayesian factor estimation
 
 
 Determine if the model is suitable by comparing it with a null (with no
@@ -484,6 +296,74 @@ pm
 
 We need to define our alternative H1 hypothesis. 
 
+
+```{r}
+
+X0 <- model.matrix(infection_train$infection ~ 1 , data = infection_train)
+n0 <- nrow(X0);n0
+k0 <- ncol(X0);k0
+
+```
+
+
+Model specification in JAGS dialect.
+
+```{r}
+model_code0 <- "
+model
+{
+  # Likelihood
+  for (i in 1:n) {
+    y[i] ~ dbern(max(0, min(eta[i], 1)))
+    logit(eta[i]) <- inprod(beta[], X[i, ])
+  }
+
+  # Priors
+  for (j in 1:k) {
+      beta[j] ~ dnorm(0, 1.2^-2)
+  }
+}
+"
+```
+
+
+
+```{r}
+model_data0 <- list(n = n0, k = k0, y = infection_train$infection, X = X0)
+model_parameters0 <- c("beta")
+```
+
+
+```{r}
+model_run0 <- jags(
+  data = model_data0,
+  parameters.to.save = model_parameters0,
+  model.file = textConnection(model_code0),
+  n.chains = 2,
+  n.iter = 8000,
+  n.burnin = 100,
+  n.thin = 20
+)
+
+#n.chains = 4,
+ # n.iter = 5000,
+ # n.burnin = 200,
+ # n.thin = 5
+
+```
+
+
+```{r}
+model_run_mcmc0 <- as.mcmc(model_run0)
+```
+
+```{r}
+summary(model_run_mcmc0)
+```
+
+
+
+
 ```{r}
 chains0 <- tibble()
 for (i in 1:length(model_run_mcmc0)) {
@@ -493,7 +373,7 @@ chains0
 ```
 
 
-Bayesian factor estimation without Bridge sampler
+Bayesian factor estimation 
 
 ```{r}
 h0prior <- pnorm(0, mean = 0, sd = 1.2)
@@ -517,6 +397,10 @@ Hence, there is a strong evidence for H0 hypothesis (when it is low) (our null h
 
 
 
+PART 3
+
+
+
 
 Present a predictive performance measure of the model using the test
 subset (remaining observations).
@@ -530,8 +414,8 @@ subset (remaining observations).
 
 
 
-Produce a report with the results of the data analysis, with all the code
-used.
+
+
 
 
 
