@@ -23,6 +23,8 @@ library(coda)
 library(bridgesampling)
 library(lattice)
 library(ggmcmc)
+library(bayesplot)
+library(ggplot2)
 
 ```
 
@@ -163,6 +165,7 @@ print(model_run)
 ```
 
 The Deviance information criterion (DIC) is a commonly applied method to summarize the fit of an MCMC chain and to access model correctness. When comparing different models, lower DIC has more evidence that this is the correct model.
+We can see mean and standard deviation, together with credibility intervals for each of our parameters. 
 
 
 
@@ -193,6 +196,7 @@ We can also see posterior density plots, however they are not exactly ued for co
 
 
 ```{r}
+par(mar = rep(2, 4))
 plot(model_run_mcmc)
 ```
 
@@ -219,6 +223,7 @@ autocorr.diag(model_run_mcmc)
 This can easily be plotted as an explanation. We can see autocorrelation at first lag (shown as a vertical line) and no autocorrelation further. 
 
 ```{r}
+par(mar = rep(2, 4))
 autocorr.plot(model_run_mcmc)
 
 ```
@@ -237,6 +242,7 @@ to see if the two parts of the chain are from the same distribution. The expecte
 
 
 ```{r}
+par(mar = rep(2, 4))
 geweke.plot(model_run_mcmc)
 ```
 
@@ -252,8 +258,7 @@ gelman.diag(model_run_mcmc)
 
 
 
-
-##Bayesian factor estimation
+##Bayesian factor estimation using posterior odds ratio
 
 
 Determine if the model is suitable by comparing it with a null (with no
@@ -269,30 +274,6 @@ for (i in 1:length(model_run_mcmc)) {
 chains
 ```
 
-
-
-```{r}
-ngen <- 320
-y_gen <- matrix(NA, ngen, n)
-mean_y_gen <- rep(NA, ngen)
-mean_col_X <- colMeans(X)
-for (igen in 1:ngen) {
-  id_gen <- sample(1:nrow(chains), 1)
-  beta_sim <- chains[id_gen, 1:dim(X)[2]]
-  for (i in 1:n) {
-      y_gen[igen, i] <- as.numeric(rbernoulli(1, 1 / (1 + exp(-sum(beta_sim * X[i, ])))))
-  }
-  mean_y_gen[igen] <- mean(y_gen[igen, ])
-}
-mean_y_gen <- tibble(`mean Y` = mean_y_gen)
-```
-
-
-
-```{r}
-pm <- ggplot(data = mean_y_gen, aes(x = `mean Y`)) + geom_density(fill = "blue", alpha = 0.3) + geom_vline(xintercept = mean(infection_train$infection), color = "red")
-pm
-```
 
 We need to define our alternative H1 hypothesis. 
 
@@ -319,9 +300,8 @@ model
   }
 
   # Priors
-  for (j in 1:k) {
-      beta[j] ~ dnorm(0, 1.2^-2)
-  }
+  
+      beta ~ dnorm(0, 1.2^-2)
 }
 "
 ```
@@ -344,11 +324,6 @@ model_run0 <- jags(
   n.burnin = 100,
   n.thin = 20
 )
-
-#n.chains = 4,
- # n.iter = 5000,
- # n.burnin = 200,
- # n.thin = 5
 
 ```
 
@@ -373,31 +348,133 @@ chains0
 ```
 
 
-Bayesian factor estimation 
+Bayesian factor estimation using BLA way
 
 ```{r}
-h0prior <- pnorm(0, mean = 0, sd = 1.2)
-h0post <- sum(chains$`beta[2]` <= 0) / dim(chains)[1] 
-
 h1prior <- pnorm(0, mean = 0, sd = 1.2)
-h1post <- sum(chains0$beta <= 0) / dim(chains0)[1]
+h1post <- sum(chains$`beta[2]` <= 0) / dim(chains)[1] 
+
+h0prior <- pnorm(0, mean = 0, sd = 1.2)
+h0post <- sum(chains0$beta <= 0) / dim(chains0)[1]
 
 
-bf <- (h1post / h1prior) / (h0post / h0prior); bf
+bf <- (h0post / h0prior) / (h1post / h1prior); bf
 
 
 
 ```
-
-Hence, there is a strong evidence for H0 hypothesis (when it is low) (our null hypothesis) against H1 (new alternative) hypothesis.
-
+Because Bayes value is small there is a strong evidence for our H1 hypothesis (our null hypothesis) against H0 (new alternative) hypothesis.
 
 
 
+##Bayesian factor estimation using Bridge sampling
 
 
 
-PART 3
+```{r}
+log_posterior_H1 <- function(pars, data) {
+  beta_coef <- c()
+  for (i in 1:k) {
+    beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+  }
+  out <-
+    sum(dnorm(beta_coef, 0, 1.2, log = TRUE)) +  # prior
+    sum(dnorm(infection_train$infection, X %*% beta_coef, log = TRUE)) # likelihood
+  return(out)
+}
+```
+
+
+```{r}
+lb_H1 <- rep(-Inf, k)
+ub_H1 <- rep(Inf, k)
+for (i in 1:k) {
+  names(lb_H1)[i] <- paste0("beta[", i, "]")
+  names(ub_H1)[i] <- paste0("beta[", i, "]")
+}
+lb_H1["deviance"] <- -Inf
+ub_H1["deviance"] <- Inf
+```
+
+
+
+
+```{r}
+bridge_H1 <- bridge_sampler(samples = model_run_mcmc,
+                            log_posterior = log_posterior_H1,
+                            data = model_data,
+                            lb = lb_H1, ub = ub_H1)
+```
+
+
+
+For my alternative hypothesis
+
+
+```{r}
+log_posterior_H0 <- function(pars, data) {
+  beta_coef <- c()
+  if (k0 == 1) {
+    beta_coef[1] <- pars[paste0("beta")]  ## extract parameter
+  } else {
+    for (i in 1:k0) {
+      beta_coef[i] <- pars[paste0("beta[", i, "]")]  ## extract parameter
+    }
+  }
+  out <-
+    sum(dnorm(beta_coef, 0, 1.2, log = TRUE)) +  # prior
+    sum(dnorm(infection_train$infection, X0 %*% beta_coef, log = TRUE)) # likelihood
+  return(out)
+}
+```
+
+
+```{r}
+lb_H0 <- rep(-Inf, k0)
+ub_H0 <- rep(Inf, k0)
+if (k0 == 1) {
+  names(lb_H0)[1] <- "beta"
+  names(ub_H0)[1] <- "beta"
+} else {
+  for (i in 1:k0) {
+    names(lb_H0)[i] <- paste0("beta[", i, "]")
+    names(ub_H0)[i] <- paste0("beta[", i, "]")
+  }
+}
+lb_H0["deviance"] <- -Inf
+ub_H0["deviance"] <- Inf
+```
+
+
+
+```{r}
+bridge_H0 <- bridge_sampler(samples = model_run_mcmc0,
+                            log_posterior = log_posterior_H0,
+                            data = model_data0,
+                            lb = lb_H0, ub = ub_H0)
+```
+
+
+Now estimate Bayes factor.
+
+```{r}
+bf_H1vsH0 <- bf(bridge_H1, bridge_H0); bf_H1vsH0
+```
+
+
+Hence, we can again conclude that our initial hypothesis is better than alternative hypothesis without covariates.
+
+
+##The deviance information criterion (DIC)
+
+DIC cam also indicate which model is better. Because models with smaller DIC are preferred to models with larger DIC, we can again see that our initial model is better.
+
+```{r}
+DIC_model1<-model_run$BUGSoutput$DIC; DIC_model1
+DIC_model0<-model_run0$BUGSoutput$DIC; DIC_model0
+
+```
+
 
 
 
@@ -406,18 +483,82 @@ Present a predictive performance measure of the model using the test
 subset (remaining observations).
 
 
+We could compare distributions of real data (infection_test dataset) with values derived from posterior distribution of our model.
+
+
+Those will be generated y values from our model using our parameters.
+
+```{r}
+ngen <- 404
+y_gen <- matrix(NA, ngen, n)
+mean_y_gen <- rep(NA, ngen)
+mean_col_X <- colMeans(X)
+for (igen in 1:ngen) {
+  id_gen <- sample(1:nrow(chains), 1)
+  beta_sim <- chains[id_gen, 1:dim(X)[2]]
+  for (i in 1:n) {
+      y_gen[igen, i] <- as.numeric(rbernoulli(1, 1 / (1 + exp(-sum(beta_sim * X[i, ])))))
+  }
+  mean_y_gen[igen] <- mean(y_gen[igen, ])
+}
+mean_y_gen <- tibble(`mean Y` = mean_y_gen)
+```
+
+
+
+First we can see our predictive posterior distribution and mean if we draw from training dataset.
+
+
+```{r}
+pm <- ggplot(data = mean_y_gen, aes(x = `mean Y`)) + geom_density(fill = "blue", alpha = 0.3) + geom_vline(xintercept = mean(infection_train$infection), color = "red")
+pm
+```
+
+
+```{r}
+Xt <- model.matrix(infection ~ ., data = infection_test)
+nt <- nrow(Xt);nt
+kt <- ncol(Xt);kt
+
+```
+
+
+
+```{r}
+ngent <- 404
+y_gent <- matrix(NA, ngent, nt)
+mean_y_gent <- rep(NA, ngent)
+mean_col_Xt <- colMeans(Xt)
+for (igent in 1:ngent) {
+  id_gent <- sample(1:nrow(chains), 1)
+  beta_sim <- chains[id_gent, 1:dim(Xt)[2]]
+  for (i in 1:nt) {
+      y_gent[igent, i] <- as.numeric(rbernoulli(1, 1 / (1 + exp(-sum(beta_sim * Xt[i, ])))))
+  }
+  mean_y_gent[igent] <- mean(y_gent[igent, ])
+}
+mean_y_gent <- tibble(`meanY_test` = mean_y_gent)
+```
+
+
+We can also plot posterior predictive distribution from using parameters that were estimated from tarining dataset and drawing from testing dataset variables.  
+
+```{r}
+
+pmt <- ggplot(data = mean_y_gent, aes(x = `meanY_test`)) + geom_density(fill = "blue", alpha = 0.3) + geom_vline(xintercept = mean(infection_test$infection), color = "red")
+pmt
+```
 
 
 
 
+```{r}
+dat <- data.frame(dens = c(mean_y_gen$`mean Y`, mean_y_gent$meanY_test), distribution = c("training","testing"))
 
+#Plot.
 
-
-
-
-
-
-
+ggplot(dat, aes(x = dens, fill = distribution)) + geom_density(alpha = 0.5) + geom_vline(xintercept = mean(infection_test$infection))
+```
 
 
 
